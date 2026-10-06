@@ -82,8 +82,9 @@
   .b-del-yes{background:var(--out-ink); color:#fff; border:0}
 
   /* 儲存中 */
-  #busy{position:fixed; inset:0; background:rgba(245,247,250,.8); z-index:50; display:none; align-items:center; justify-content:center; font-size:32px; font-weight:800; color:var(--navy)}
-  #busy.open{display:flex}
+  #sync{font-size:20px; font-weight:700; padding:2px 10px; border-radius:999px}
+  #sync.saving{background:#E7EEF6; color:var(--navy-2)}
+  #sync.saved{background:#E2F2E7; color:var(--ok)}
 
   /* 結果提示 */
   #toast{position:fixed; left:12px; right:12px; bottom:calc(env(safe-area-inset-bottom,0px) + 12px); z-index:40; max-width:640px; margin:0 auto; background:var(--ink); color:#fff; border-radius:16px; padding:16px 18px; font-size:24px; font-weight:700; display:none; align-items:center; gap:14px}
@@ -113,7 +114,7 @@
 
 <main>
   <input id="search" class="search" type="search" placeholder="找規格或尺寸，例如 3V、1700" autocomplete="off">
-  <div class="meta"><span id="meta">讀取中…</span><button class="who" id="whoBtn" type="button"></button></div>
+  <div class="meta"><span id="meta">讀取中…</span><span id="sync"></span><button class="who" id="whoBtn" type="button"></button></div>
   <button class="add-btn" id="addBtn" type="button">＋ 新增皮帶</button>
   <div id="list"></div>
 </main>
@@ -164,7 +165,6 @@
   </form>
 </div>
 
-<div id="busy">儲存中…</div>
 <div id="toast" role="status"><span id="toastText"></span><button id="toastUndo" type="button">復原</button></div>
 
 <script>
@@ -186,28 +186,32 @@ let lastMeta = "";
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const nowText = () => new Date().toLocaleString("zh-TW", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit", hour12:false });
-const lineData = () => lines.find(l => l.name === current);
-const findItem = code => (lineData()?.items || []).find(it => it.code === code);
+const norm = s => String(s || "").replace(/\s/g, "").toUpperCase();
+const getLine = name => lines.find(l => l.name === name);
+const findItem = (code, line = current) => (getLine(line)?.items || []).find(it => norm(it.code) === norm(code));
+const saveCache = () => store.set("belt-cache", { time: nowText(), lines });
 
 /* ---------- 讀取 ---------- */
 function applyLines(newLines){
   lines = newLines || [];
   if (!lines.some(l => l.name === current)) current = lines[0]?.name || "";
-  store.set("belt-cache", { time: nowText(), lines });
+  saveCache();
 }
 
-async function loadAll(){
+async function loadAll(force = false){
   if (!API_URL.startsWith("https://")){
     $("list").innerHTML = `<div class="msg err">還沒設定 Apps Script 網址。<br>請打開 index.html，把網址貼到 API_URL。</div>`;
     $("meta").textContent = "";
     return;
   }
-  $("meta").textContent = "讀取中…";
+  // 還有沒存完的動作時先不覆蓋畫面，存完會自動更新
+  if (!force && (queue.length || syncing)) return;
   $("reload").disabled = true;
   try {
     const res = await fetch(API_URL + "?t=" + Date.now());
     const r = await res.json();
     if (!r.ok) throw new Error(r.message);
+    if (!force && (queue.length || syncing)) return;
     applyLines(r.lines);
     render(`已更新 ${nowText()}`);
   } catch(e){
@@ -225,30 +229,107 @@ async function loadAll(){
   }
 }
 
-/* ---------- 寫入 ---------- */
-async function api(action, payload){
-  await ensureAuth();
-  $("busy").classList.add("open");
-  try {
-    const res = await fetch(API_URL, {
-      method:"POST",
-      headers:{ "Content-Type":"text/plain;charset=utf-8" },   // 用 text/plain 避免跨網域預檢
-      body: JSON.stringify({ action, line: current, ...payload, pin: auth.pin, who: auth.name })
-    });
-    const r = await res.json();
-    if (!r.ok){
-      if (r.error === "pin"){ auth.pin = ""; store.set("belt-auth", auth); }
-      throw new Error(r.message || "存檔失敗");
-    }
-    applyLines(r.lines);
-    render(`已更新 ${nowText()}`);
-    return r;
-  } catch(e){
-    throw new Error(e.message === "Failed to fetch" ? "連不上表單，請確認網路後再試一次" : e.message);
-  } finally {
-    $("busy").classList.remove("open");
+/* ---------- 先改畫面，背景再存到表單 ---------- */
+// 和 Code.gs 相同的規則，在手機上先算好，畫面立刻更新
+function localApply(job){
+  const L = getLine(job.line);
+  if (!L) throw new Error(`找不到「${job.line}」`);
+  const items = L.items;
+  const idx = code => items.findIndex(it => norm(it.code) === norm(code));
+
+  if (job.action === "adjust"){
+    const it = items[idx(job.code)];
+    if (!it) throw new Error(`找不到代號 ${job.code}`);
+    const now = it.qty ?? 0, next = now + job.delta;
+    if (next < 0) throw new Error(`${it.code} 只剩 ${now} ${it.unit}，不夠領`);
+    it.qty = next;
+    return `${job.delta < 0 ? "領用" : "補貨"} ${Math.abs(job.delta)}${it.unit}，${it.code} 剩 ${next}${it.unit}`;
   }
+  if (job.action === "create"){
+    if (idx(job.item.code) >= 0) throw new Error(`代號 ${job.item.code} 已經有了，請換一個`);
+    items.push({ ...job.item, unit: job.item.unit || "條" });
+    return `已新增 ${job.item.code}`;
+  }
+  if (job.action === "update"){
+    const i = idx(job.code);
+    if (i < 0) throw new Error(`找不到代號 ${job.code}`);
+    if (norm(job.item.code) !== norm(job.code) && idx(job.item.code) >= 0) throw new Error(`代號 ${job.item.code} 已經有了，請換一個`);
+    items[i] = { ...items[i], ...job.item, unit: items[i].unit };
+    return `已修改 ${job.item.code}`;
+  }
+  if (job.action === "delete"){
+    const i = idx(job.code);
+    if (i < 0) throw new Error(`找不到代號 ${job.code}`);
+    items.splice(i, 1);
+    return `已刪除 ${job.code}`;
+  }
+  throw new Error("不認得的動作");
 }
+
+const queue = [];
+let syncing = false;
+
+async function act(action, payload){
+  await ensureAuth();
+  const job = { action, line: current, ...payload };
+  const msg = localApply(job);        // 規則不符會直接丟出錯誤，不會送出
+  saveCache();
+  render();
+  queue.push(job);
+  pump();
+  return msg;
+}
+
+async function send(job){
+  const res = await fetch(API_URL, {
+    method:"POST",
+    headers:{ "Content-Type":"text/plain;charset=utf-8" },   // 用 text/plain 避免跨網域預檢
+    body: JSON.stringify({ ...job, pin: auth.pin, who: auth.name })
+  });
+  const r = await res.json();
+  if (!r.ok){
+    if (r.error === "pin"){ auth.pin = ""; store.set("belt-auth", auth); }
+    throw new Error(r.message || "存檔失敗");
+  }
+  return r;
+}
+
+async function pump(){
+  if (syncing) return;
+  syncing = true; showSync();
+  let failed = false;
+  while (queue.length){
+    const job = queue[0];
+    try {
+      const r = await send(job);
+      queue.shift();
+      if (!queue.length){ applyLines(r.lines); render(`已更新 ${nowText()}`); }
+    } catch(e){
+      const code = job.code || job.item?.code || "";
+      queue.length = 0;
+      const why = e.message === "Failed to fetch" ? "連不上網路" : e.message;
+      toast(`${code} 沒有存進表單（${why}），畫面已改回表單上的資料`, true);
+      failed = true;
+      syncing = false; showSync();
+      await loadAll(true);
+      break;
+    }
+  }
+  syncing = false; showSync(!failed);
+}
+
+let syncTimer;
+function showSync(done){
+  clearTimeout(syncTimer);
+  const el = $("sync");
+  if (syncing || queue.length){ el.className = "saving"; el.textContent = "存檔中…"; }
+  else if (done){ el.className = "saved"; el.textContent = "✓ 已存到表單"; syncTimer = setTimeout(() => { el.className = ""; el.textContent = ""; }, 3000); }
+  else { el.className = ""; el.textContent = ""; }
+}
+
+window.addEventListener("beforeunload", e => {
+  if (queue.length || syncing){ e.preventDefault(); e.returnValue = ""; }
+});
 
 /* ---------- 經手人 ---------- */
 let loginResolve = null, loginReject = null;
@@ -257,7 +338,7 @@ function ensureAuth(){
   return new Promise((res, rej) => {
     loginResolve = res; loginReject = rej;
     $("l-name").value = auth.name; $("l-pin").value = "";
-    $("loginErr").textContent = auth.name ? "密碼不對或尚未輸入，請重新輸入" : "";
+    $("loginErr").textContent = auth.name ? "請輸入密碼" : "";
     openSheet("loginSheet");
     setTimeout(() => $(auth.name ? "l-pin" : "l-name").focus(), 50);
   });
@@ -286,7 +367,7 @@ function render(metaText){
     `<button class="tab" role="tab" aria-selected="${l.name === current}" data-line="${esc(l.name)}">${esc(l.name)}</button>`).join("");
   renderWho();
 
-  const items = lineData()?.items || [];
+  const items = getLine(current)?.items || [];
   const kw = $("search").value.toLowerCase().replace(/\s/g, "");
   const shown = kw ? items.filter(it => (it.code + it.spec + it.size + it.note).toLowerCase().replace(/\s/g, "").includes(kw)) : items;
   $("meta").textContent = `${current}：${kw ? `找到 ${shown.length} 種，` : ""}共 ${items.length} 種　${lastMeta}`;
@@ -322,7 +403,7 @@ function toast(text, bad = false, undo = null){
   undoFn = undo;
   $("toastUndo").style.display = undo ? "" : "none";
   $("toast").classList.add("open");
-  toastTimer = setTimeout(() => { $("toast").classList.remove("open"); undoFn = null; }, undo ? 8000 : 5000);
+  toastTimer = setTimeout(() => { $("toast").classList.remove("open"); undoFn = null; }, bad ? 8000 : (undo ? 8000 : 5000));
 }
 $("toastUndo").addEventListener("click", async () => {
   const fn = undoFn; undoFn = null; $("toast").classList.remove("open");
@@ -332,19 +413,19 @@ $("toastUndo").addEventListener("click", async () => {
 /* ---------- 領用 / 補貨 ---------- */
 $("list").addEventListener("click", async e => {
   const b = e.target.closest("button[data-act]"); if (!b) return;
-  const code = b.dataset.code, act = b.dataset.act;
-  if (act === "edit") return openEditor(findItem(code));
-  const delta = act === "take" ? -1 : 1;
+  const code = b.dataset.code, act_ = b.dataset.act;
+  if (act_ === "edit") return openEditor(findItem(code));
+  const delta = act_ === "take" ? -1 : 1;
   try {
-    const r = await api("adjust", { code, delta });
-    toast(r.message, false, () => api("adjust", { code, delta: -delta }));
+    const msg = await act("adjust", { code, delta });
+    toast(msg, false, () => act("adjust", { code, delta: -delta }));
   } catch(err){ if (err.message !== "cancel") toast(err.message, true); }
 });
 
 /* ---------- 新增 / 修改 / 刪除 ---------- */
-let editing = null;   // null = 新增；否則是原本那筆
+let editing = null;   // null = 新增；否則是原本那筆（複本）
 function openEditor(item){
-  editing = item || null;
+  editing = item ? { ...item } : null;
   $("editTitle").textContent = item ? `修改 ${item.code}（${current}）` : `新增皮帶到 ${current}`;
   $("f-code").value = item?.code || "";
   $("f-spec").value = item?.spec || "";
@@ -359,8 +440,7 @@ function openEditor(item){
 }
 $("addBtn").addEventListener("click", () => openEditor(null));
 document.querySelectorAll("[data-step]").forEach(b => b.addEventListener("click", () => {
-  const v = Math.max(0, (parseInt($("f-qty").value, 10) || 0) + Number(b.dataset.step));
-  $("f-qty").value = v;
+  $("f-qty").value = Math.max(0, (parseInt($("f-qty").value, 10) || 0) + Number(b.dataset.step));
 }));
 
 $("editForm").addEventListener("submit", async e => {
@@ -374,15 +454,15 @@ $("editForm").addEventListener("submit", async e => {
   if (isNaN(item.qty) || item.qty < 0){ $("editErr").textContent = "數量要填 0 或以上的整數"; return; }
   const before = editing;
   try {
-    let r;
     if (before){
-      r = await api("update", { code: before.code, item });
+      const msg = await act("update", { code: before.code, item });
       closeSheet("editSheet");
-      toast(r.message, false, () => api("update", { code: item.code, item: before }));
+      const old = { code: before.code, spec: before.spec, size: before.size, note: before.note, qty: before.qty ?? 0 };
+      toast(msg, false, () => act("update", { code: item.code, item: old }));
     } else {
-      r = await api("create", { item });
+      const msg = await act("create", { item });
       closeSheet("editSheet");
-      toast(r.message, false, () => api("delete", { code: item.code }));
+      toast(msg, false, () => act("delete", { code: item.code }));
     }
   } catch(err){ if (err.message !== "cancel") $("editErr").textContent = err.message; }
 });
@@ -396,9 +476,10 @@ $("delNo").addEventListener("click", () => $("delConfirm").classList.remove("sho
 $("delYes").addEventListener("click", async () => {
   const before = editing;
   try {
-    const r = await api("delete", { code: before.code });
+    const msg = await act("delete", { code: before.code });
     closeSheet("editSheet");
-    toast(r.message, false, () => api("create", { item: { ...before, qty: before.qty ?? 0 } }));
+    const old = { code: before.code, spec: before.spec, size: before.size, note: before.note, qty: before.qty ?? 0 };
+    toast(msg, false, () => act("create", { item: old }));
   } catch(err){ if (err.message !== "cancel") $("editErr").textContent = err.message; }
 });
 
@@ -415,7 +496,7 @@ $("tabs").addEventListener("click", e => {
   $("search").value = ""; render(); window.scrollTo({ top:0 });
 });
 $("search").addEventListener("input", () => render());
-$("reload").addEventListener("click", loadAll);
+$("reload").addEventListener("click", () => loadAll());
 
 // 先顯示上次的資料，再去抓最新的
 const cached = store.get("belt-cache", null);
