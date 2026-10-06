@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12304D">
+<title>皮帶庫存</title>
+<style>
+  :root{
+    --navy:#12304D; --navy-2:#1E4A72; --paper:#F5F7FA; --card:#FFFFFF;
+    --ink:#0F1C2B; --muted:#4A5B6E; --line:#C9D3DE;
+    --warn-bg:#FFF1D6; --warn-ink:#7A4B00;
+    --out-bg:#FFE1E1;  --out-ink:#A11515;
+    --ok:#1F6B3A;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC","Heiti TC",sans-serif;
+    font-size:24px; line-height:1.45; color:var(--ink); background:var(--paper);
+    padding-bottom:calc(env(safe-area-inset-bottom,0px) + 120px);
+  }
+  button{font:inherit; cursor:pointer}
+  button:focus-visible,input:focus-visible{outline:4px solid #FFC94D; outline-offset:2px}
+
+  header{background:var(--navy); color:#fff; padding:calc(env(safe-area-inset-top,0px) + 18px) 20px 0; position:sticky; top:0; z-index:10}
+  .title-row{display:flex; align-items:center; justify-content:space-between; gap:12px}
+  h1{margin:0; font-size:36px; letter-spacing:.04em}
+  #reload{font-size:22px; font-weight:700; background:#fff; color:var(--navy); border:0; border-radius:14px; padding:12px 18px; min-height:56px}
+  .tabs{display:flex; gap:10px; margin-top:16px; overflow-x:auto}
+  .tab{flex:1 0 auto; min-width:120px; font-size:30px; font-weight:800; padding:14px 18px 16px; border:0; border-radius:16px 16px 0 0; background:var(--navy-2); color:#C8D6E5}
+  .tab[aria-selected="true"]{background:var(--paper); color:var(--navy)}
+
+  main{max-width:760px; margin:0 auto; padding:18px 16px 40px}
+  .search{width:100%; font:inherit; font-size:26px; padding:16px 18px; min-height:64px; border:3px solid var(--line); border-radius:14px; background:#fff; color:var(--ink)}
+  .search:focus{outline:none; border-color:var(--navy)}
+  .meta{color:var(--muted); font-size:20px; margin:10px 4px 14px; display:flex; flex-wrap:wrap; gap:4px 14px; align-items:center}
+  .who{background:none; border:0; color:var(--navy-2); text-decoration:underline; font-size:20px; padding:4px 0}
+  .add-btn{width:100%; min-height:68px; font-size:28px; font-weight:800; border:3px dashed var(--navy-2); color:var(--navy); background:#EAF0F7; border-radius:16px; margin-bottom:16px}
+
+  .belt{display:grid; grid-template-columns:72px 1fr auto; gap:6px 16px; align-items:center; background:var(--card); border:2px solid var(--line); border-radius:16px; padding:16px; margin-bottom:14px}
+  .code{grid-row:1 / span 2; align-self:start; width:72px; height:72px; border-radius:14px; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-size:30px; font-weight:800}
+  .spec{font-size:30px; font-weight:800; line-height:1.25}
+  .size{grid-column:2; font-size:30px; font-weight:700; color:var(--navy-2)}
+  .note{grid-column:1 / span 3; font-size:22px; color:var(--muted)}
+  .qty{grid-column:3; grid-row:1 / span 2; align-self:start; text-align:center; min-width:92px; padding:8px 10px; border-radius:14px; background:#E7EEF6; color:var(--navy)}
+  .qty b{display:block; font-size:44px; line-height:1}
+  .qty span{font-size:20px}
+  .belt.low .qty{background:var(--warn-bg); color:var(--warn-ink)}
+  .belt.out .qty{background:var(--out-bg); color:var(--out-ink)}
+  .belt.out{border-color:#E9A3A3}
+  .acts{grid-column:1 / span 3; display:grid; grid-template-columns:1fr 1fr auto; gap:10px; margin-top:8px}
+  .acts button{min-height:64px; font-size:24px; font-weight:800; border-radius:14px; padding:0 14px}
+  .b-take{background:#fff; color:var(--navy); border:3px solid var(--navy)}
+  .b-add{background:var(--navy); color:#fff; border:3px solid var(--navy)}
+  .b-edit{background:#E3E8EE; color:var(--ink); border:3px solid #E3E8EE}
+
+  .msg{background:#fff; border:2px dashed var(--line); border-radius:16px; padding:28px 20px; text-align:center; font-size:24px; color:var(--muted)}
+  .msg.err{border-style:solid; border-color:#E9A3A3; color:var(--out-ink); background:#FFF6F6}
+
+  /* 彈出面板 */
+  .sheet{position:fixed; inset:0; background:rgba(10,25,40,.55); z-index:30; display:none; align-items:flex-end; justify-content:center}
+  .sheet.open{display:flex}
+  .panel{background:var(--paper); width:100%; max-width:640px; max-height:100%; overflow-y:auto; border-radius:22px 22px 0 0; padding:22px 20px calc(env(safe-area-inset-bottom,0px) + 22px)}
+  .panel h2{margin:0 0 14px; font-size:32px; color:var(--navy)}
+  .field{margin-bottom:16px}
+  .field label{display:block; font-size:22px; font-weight:700; margin-bottom:6px}
+  .field input{width:100%; font:inherit; font-size:28px; padding:12px 16px; min-height:64px; border:3px solid var(--line); border-radius:14px; background:#fff; color:var(--ink)}
+  .field input:focus{outline:none; border-color:var(--navy)}
+  .stepper{display:grid; grid-template-columns:72px 1fr 72px; gap:10px}
+  .stepper button{font-size:36px; font-weight:800; border:3px solid var(--navy); background:#fff; color:var(--navy); border-radius:14px}
+  .stepper input{text-align:center; font-size:34px; font-weight:800}
+  .form-err{color:var(--out-ink); font-size:22px; font-weight:700; min-height:1.4em; margin:4px 0 10px}
+  .row-btns{display:grid; grid-template-columns:1fr 2fr; gap:12px}
+  .row-btns button{min-height:68px; font-size:26px; font-weight:800; border-radius:14px}
+  .b-cancel{background:#E3E8EE; color:var(--ink); border:0}
+  .b-save{background:var(--navy); color:#fff; border:0}
+  .b-del{width:100%; margin-top:18px; min-height:60px; font-size:22px; font-weight:700; background:none; border:3px solid #E9A3A3; color:var(--out-ink); border-radius:14px}
+  .del-confirm{display:none; margin-top:18px; padding:16px; background:var(--out-bg); border-radius:14px; color:var(--out-ink); font-size:24px; font-weight:700}
+  .del-confirm.show{display:block}
+  .del-confirm .row-btns{margin-top:12px}
+  .b-del-yes{background:var(--out-ink); color:#fff; border:0}
+
+  /* 儲存中 */
+  #busy{position:fixed; inset:0; background:rgba(245,247,250,.8); z-index:50; display:none; align-items:center; justify-content:center; font-size:32px; font-weight:800; color:var(--navy)}
+  #busy.open{display:flex}
+
+  /* 結果提示 */
+  #toast{position:fixed; left:12px; right:12px; bottom:calc(env(safe-area-inset-bottom,0px) + 12px); z-index:40; max-width:640px; margin:0 auto; background:var(--ink); color:#fff; border-radius:16px; padding:16px 18px; font-size:24px; font-weight:700; display:none; align-items:center; gap:14px}
+  #toast.open{display:flex}
+  #toast.bad{background:var(--out-ink)}
+  #toast span{flex:1}
+  #toast button{background:#fff; color:var(--ink); border:0; border-radius:12px; min-height:56px; padding:0 16px; font-size:22px; font-weight:800}
+
+  @media (max-width:420px){
+    body{font-size:22px}
+    .belt{grid-template-columns:60px 1fr auto}
+    .code{width:60px; height:60px; font-size:26px}
+    .spec,.size{font-size:26px}
+    .acts button{font-size:22px; padding:0 10px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-row">
+    <h1>皮帶庫存</h1>
+    <button id="reload" type="button">重新讀取</button>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+</header>
+
+<main>
+  <input id="search" class="search" type="search" placeholder="找規格或尺寸，例如 3V、1700" autocomplete="off">
+  <div class="meta"><span id="meta">讀取中…</span><button class="who" id="whoBtn" type="button"></button></div>
+  <button class="add-btn" id="addBtn" type="button">＋ 新增皮帶</button>
+  <div id="list"></div>
+</main>
+
+<!-- 新增 / 修改 -->
+<div class="sheet" id="editSheet">
+  <form class="panel" id="editForm" novalidate>
+    <h2 id="editTitle">新增皮帶</h2>
+    <div class="field"><label for="f-code">代號</label><input id="f-code" autocomplete="off"></div>
+    <div class="field"><label for="f-spec">規格</label><input id="f-spec" autocomplete="off" placeholder="例如 傳動帶 3V"></div>
+    <div class="field"><label for="f-size">寬*長</label><input id="f-size" autocomplete="off" placeholder="例如 40*1700"></div>
+    <div class="field">
+      <label for="f-qty">數量（條）</label>
+      <div class="stepper">
+        <button type="button" data-step="-1" aria-label="減一">−</button>
+        <input id="f-qty" type="number" inputmode="numeric" min="0" step="1">
+        <button type="button" data-step="1" aria-label="加一">＋</button>
+      </div>
+    </div>
+    <div class="field"><label for="f-note">備註</label><input id="f-note" autocomplete="off"></div>
+    <div class="form-err" id="editErr"></div>
+    <div class="row-btns">
+      <button type="button" class="b-cancel" data-close>取消</button>
+      <button type="submit" class="b-save">儲存</button>
+    </div>
+    <button type="button" class="b-del" id="delBtn">刪除這條皮帶</button>
+    <div class="del-confirm" id="delConfirm">
+      <div id="delText"></div>
+      <div class="row-btns">
+        <button type="button" class="b-cancel" id="delNo">不要</button>
+        <button type="button" class="b-del-yes" id="delYes">確定刪除</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<!-- 經手人 / 密碼 -->
+<div class="sheet" id="loginSheet">
+  <form class="panel" id="loginForm" novalidate>
+    <h2>請先填經手人</h2>
+    <div class="field"><label for="l-name">你的名字</label><input id="l-name" autocomplete="name"></div>
+    <div class="field"><label for="l-pin">密碼</label><input id="l-pin" type="password" inputmode="numeric" autocomplete="off"></div>
+    <div class="form-err" id="loginErr"></div>
+    <div class="row-btns">
+      <button type="button" class="b-cancel" data-close>取消</button>
+      <button type="submit" class="b-save">確定</button>
+    </div>
+  </form>
+</div>
+
+<div id="busy">儲存中…</div>
+<div id="toast" role="status"><span id="toastText"></span><button id="toastUndo" type="button">復原</button></div>
+
+<script>
+/* ===== 設定區 ===== */
+// 部署 Apps Script 後拿到的網址，貼在這裡（結尾是 /exec）
+const API_URL = "https://script.google.com/macros/s/AKfycbz_SApijTLIR21-9vPoY2zL9yPf62SDcJi2r_vYeJkRLFQyBYC9Ob8ukepGzSmO1-yA/exec";
+const LOW_STOCK = 1;   // 數量 ≤ 這個值用黃色提醒；0 條用紅色
+
+/* ===== 以下不用改 ===== */
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch(e){ return d; } },
+  set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+};
+let lines = [];                       // [{name, items:[{code,spec,size,qty,unit,note}]}]
+let current = store.get("belt-line", "");
+let auth = store.get("belt-auth", { name:"", pin:"" });
+let lastMeta = "";
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const nowText = () => new Date().toLocaleString("zh-TW", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit", hour12:false });
+const lineData = () => lines.find(l => l.name === current);
+const findItem = code => (lineData()?.items || []).find(it => it.code === code);
+
+/* ---------- 讀取 ---------- */
+function applyLines(newLines){
+  lines = newLines || [];
+  if (!lines.some(l => l.name === current)) current = lines[0]?.name || "";
+  store.set("belt-cache", { time: nowText(), lines });
+}
+
+async function loadAll(){
+  if (!API_URL.startsWith("https://")){
+    $("list").innerHTML = `<div class="msg err">還沒設定 Apps Script 網址。<br>請打開 index.html，把網址貼到 API_URL。</div>`;
+    $("meta").textContent = "";
+    return;
+  }
+  $("meta").textContent = "讀取中…";
+  $("reload").disabled = true;
+  try {
+    const res = await fetch(API_URL + "?t=" + Date.now());
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.message);
+    applyLines(r.lines);
+    render(`已更新 ${nowText()}`);
+  } catch(e){
+    const saved = store.get("belt-cache", null);
+    if (saved && saved.lines?.length){
+      lines = saved.lines;
+      if (!lines.some(l => l.name === current)) current = lines[0].name;
+      render(`連不上表單，顯示 ${saved.time} 的資料`);
+    } else {
+      $("list").innerHTML = `<div class="msg err">讀不到庫存資料。<br>請確認網路後，按右上角「重新讀取」。</div>`;
+      $("meta").textContent = "";
+    }
+  } finally {
+    $("reload").disabled = false;
+  }
+}
+
+/* ---------- 寫入 ---------- */
+async function api(action, payload){
+  await ensureAuth();
+  $("busy").classList.add("open");
+  try {
+    const res = await fetch(API_URL, {
+      method:"POST",
+      headers:{ "Content-Type":"text/plain;charset=utf-8" },   // 用 text/plain 避免跨網域預檢
+      body: JSON.stringify({ action, line: current, ...payload, pin: auth.pin, who: auth.name })
+    });
+    const r = await res.json();
+    if (!r.ok){
+      if (r.error === "pin"){ auth.pin = ""; store.set("belt-auth", auth); }
+      throw new Error(r.message || "存檔失敗");
+    }
+    applyLines(r.lines);
+    render(`已更新 ${nowText()}`);
+    return r;
+  } catch(e){
+    throw new Error(e.message === "Failed to fetch" ? "連不上表單，請確認網路後再試一次" : e.message);
+  } finally {
+    $("busy").classList.remove("open");
+  }
+}
+
+/* ---------- 經手人 ---------- */
+let loginResolve = null, loginReject = null;
+function ensureAuth(){
+  if (auth.name && auth.pin) return Promise.resolve();
+  return new Promise((res, rej) => {
+    loginResolve = res; loginReject = rej;
+    $("l-name").value = auth.name; $("l-pin").value = "";
+    $("loginErr").textContent = auth.name ? "密碼不對或尚未輸入，請重新輸入" : "";
+    openSheet("loginSheet");
+    setTimeout(() => $(auth.name ? "l-pin" : "l-name").focus(), 50);
+  });
+}
+$("loginForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const name = $("l-name").value.trim(), pin = $("l-pin").value.trim();
+  if (!name){ $("loginErr").textContent = "請填你的名字"; return; }
+  if (!pin){ $("loginErr").textContent = "請填密碼"; return; }
+  auth = { name, pin }; store.set("belt-auth", auth);
+  const done = loginResolve; loginResolve = loginReject = null;
+  closeSheet("loginSheet"); renderWho();
+  done?.();
+});
+function cancelLogin(){ loginReject?.(new Error("cancel")); loginResolve = loginReject = null; }
+$("whoBtn").addEventListener("click", () => {
+  auth = { name: auth.name, pin:"" };
+  ensureAuth().catch(() => {});
+});
+function renderWho(){ $("whoBtn").textContent = auth.name ? `經手人：${auth.name}（更換）` : "填寫經手人"; }
+
+/* ---------- 畫面 ---------- */
+function render(metaText){
+  if (metaText !== undefined) lastMeta = metaText;
+  $("tabs").innerHTML = lines.map(l =>
+    `<button class="tab" role="tab" aria-selected="${l.name === current}" data-line="${esc(l.name)}">${esc(l.name)}</button>`).join("");
+  renderWho();
+
+  const items = lineData()?.items || [];
+  const kw = $("search").value.toLowerCase().replace(/\s/g, "");
+  const shown = kw ? items.filter(it => (it.code + it.spec + it.size + it.note).toLowerCase().replace(/\s/g, "").includes(kw)) : items;
+  $("meta").textContent = `${current}：${kw ? `找到 ${shown.length} 種，` : ""}共 ${items.length} 種　${lastMeta}`;
+
+  if (!items.length){ $("list").innerHTML = `<div class="msg">${esc(current)} 還沒有皮帶，按上面「＋ 新增皮帶」加入。</div>`; return; }
+  if (!shown.length){ $("list").innerHTML = `<div class="msg">找不到「${esc($("search").value)}」，請換個字再找。</div>`; return; }
+
+  $("list").innerHTML = shown.map(it => {
+    const n = it.qty;
+    const cls = n === 0 ? "out" : (n !== null && n <= LOW_STOCK ? "low" : "");
+    const c = esc(it.code);
+    return `<div class="belt ${cls}">
+      <div class="code">${c}</div>
+      <div class="spec">${esc(it.spec) || "（未填規格）"}</div>
+      <div class="qty"><b>${n === null ? "—" : n}</b><span>${n === 0 ? "缺貨" : esc(it.unit)}</span></div>
+      <div class="size">${esc(it.size)}</div>
+      ${it.note ? `<div class="note">${esc(it.note)}</div>` : ""}
+      <div class="acts">
+        <button class="b-take" data-act="take" data-code="${c}" ${n ? "" : "disabled style='opacity:.4'"}>領用 −1</button>
+        <button class="b-add"  data-act="add"  data-code="${c}">補貨 +1</button>
+        <button class="b-edit" data-act="edit" data-code="${c}">修改</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- 提示 ---------- */
+let toastTimer, undoFn = null;
+function toast(text, bad = false, undo = null){
+  clearTimeout(toastTimer);
+  $("toastText").textContent = text;
+  $("toast").classList.toggle("bad", bad);
+  undoFn = undo;
+  $("toastUndo").style.display = undo ? "" : "none";
+  $("toast").classList.add("open");
+  toastTimer = setTimeout(() => { $("toast").classList.remove("open"); undoFn = null; }, undo ? 8000 : 5000);
+}
+$("toastUndo").addEventListener("click", async () => {
+  const fn = undoFn; undoFn = null; $("toast").classList.remove("open");
+  if (fn) try { await fn(); toast("已復原"); } catch(e){ if (e.message !== "cancel") toast(e.message, true); }
+});
+
+/* ---------- 領用 / 補貨 ---------- */
+$("list").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const code = b.dataset.code, act = b.dataset.act;
+  if (act === "edit") return openEditor(findItem(code));
+  const delta = act === "take" ? -1 : 1;
+  try {
+    const r = await api("adjust", { code, delta });
+    toast(r.message, false, () => api("adjust", { code, delta: -delta }));
+  } catch(err){ if (err.message !== "cancel") toast(err.message, true); }
+});
+
+/* ---------- 新增 / 修改 / 刪除 ---------- */
+let editing = null;   // null = 新增；否則是原本那筆
+function openEditor(item){
+  editing = item || null;
+  $("editTitle").textContent = item ? `修改 ${item.code}（${current}）` : `新增皮帶到 ${current}`;
+  $("f-code").value = item?.code || "";
+  $("f-spec").value = item?.spec || "";
+  $("f-size").value = item?.size || "";
+  $("f-qty").value  = item ? (item.qty ?? 0) : 1;
+  $("f-note").value = item?.note || "";
+  $("editErr").textContent = "";
+  $("delBtn").style.display = item ? "" : "none";
+  $("delConfirm").classList.remove("show");
+  openSheet("editSheet");
+  if (!item) setTimeout(() => $("f-code").focus(), 50);
+}
+$("addBtn").addEventListener("click", () => openEditor(null));
+document.querySelectorAll("[data-step]").forEach(b => b.addEventListener("click", () => {
+  const v = Math.max(0, (parseInt($("f-qty").value, 10) || 0) + Number(b.dataset.step));
+  $("f-qty").value = v;
+}));
+
+$("editForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const item = {
+    code: $("f-code").value.trim(), spec: $("f-spec").value.trim(),
+    size: $("f-size").value.trim(), note: $("f-note").value.trim(),
+    qty: parseInt($("f-qty").value, 10)
+  };
+  if (!item.code){ $("editErr").textContent = "請填「代號」"; return; }
+  if (isNaN(item.qty) || item.qty < 0){ $("editErr").textContent = "數量要填 0 或以上的整數"; return; }
+  const before = editing;
+  try {
+    let r;
+    if (before){
+      r = await api("update", { code: before.code, item });
+      closeSheet("editSheet");
+      toast(r.message, false, () => api("update", { code: item.code, item: before }));
+    } else {
+      r = await api("create", { item });
+      closeSheet("editSheet");
+      toast(r.message, false, () => api("delete", { code: item.code }));
+    }
+  } catch(err){ if (err.message !== "cancel") $("editErr").textContent = err.message; }
+});
+
+$("delBtn").addEventListener("click", () => {
+  $("delText").textContent = `確定要刪除 ${editing.code}　${editing.spec} ${editing.size}？`;
+  $("delConfirm").classList.add("show");
+  $("delConfirm").scrollIntoView({ block:"nearest" });
+});
+$("delNo").addEventListener("click", () => $("delConfirm").classList.remove("show"));
+$("delYes").addEventListener("click", async () => {
+  const before = editing;
+  try {
+    const r = await api("delete", { code: before.code });
+    closeSheet("editSheet");
+    toast(r.message, false, () => api("create", { item: { ...before, qty: before.qty ?? 0 } }));
+  } catch(err){ if (err.message !== "cancel") $("editErr").textContent = err.message; }
+});
+
+/* ---------- 面板開關 ---------- */
+function openSheet(id){ $(id).classList.add("open"); }
+function closeSheet(id){ $(id).classList.remove("open"); if (id === "loginSheet") cancelLogin(); }
+document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => closeSheet(b.closest(".sheet").id)));
+document.querySelectorAll(".sheet").forEach(s => s.addEventListener("click", e => { if (e.target === s) closeSheet(s.id); }));
+
+/* ---------- 其他 ---------- */
+$("tabs").addEventListener("click", e => {
+  const b = e.target.closest(".tab"); if (!b) return;
+  current = b.dataset.line; store.set("belt-line", current);
+  $("search").value = ""; render(); window.scrollTo({ top:0 });
+});
+$("search").addEventListener("input", () => render());
+$("reload").addEventListener("click", loadAll);
+
+// 先顯示上次的資料，再去抓最新的
+const cached = store.get("belt-cache", null);
+if (cached?.lines?.length){ lines = cached.lines; if (!lines.some(l => l.name === current)) current = lines[0].name; render(`顯示 ${cached.time} 的資料，更新中…`); }
+renderWho();
+loadAll();
+</script>
+</body>
+</html>
